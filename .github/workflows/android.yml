@@ -1,0 +1,52 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Work out the website address
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')
+          REPO="${{ github.event.repository.name }}"
+          if [ "$REPO" = "$OWNER.github.io" ]; then P="/"; else P="/$REPO/"; fi
+          echo "SITE_HOST=$OWNER.github.io" >> "$GITHUB_ENV"
+          echo "SITE_PATH=$P" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon -PsiteHost="$SITE_HOST" -PsitePath="$SITE_PATH" -PversionCode=${{ github.run_number }}
+
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk CloudNest.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CloudNest-apk
+          path: CloudNest.apk
+
+      - name: Publish to Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: CloudNest APK ${{ github.run_number }}
+          files: CloudNest.apk
+          make_latest: true
