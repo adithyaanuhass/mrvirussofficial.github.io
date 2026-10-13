@@ -22,11 +22,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Collect web files only
+      - name: Collect web files
         run: |
-          mkdir _site
-          cp -r index.html app.js config.js sw.js manifest.webmanifest icons .well-known _site/
+          mkdir -p _site/.well-known
+          cp -r index.html app.js config.js sw.js manifest.webmanifest icons _site/
           touch _site/.nojekyll
+          cat > _site/.well-known/assetlinks.json <<'EOF'
+          [{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"app.cloudnest.twa","sha256_cert_fingerprints":["C0:83:C4:A5:26:C1:6E:2C:4B:8B:55:1F:8B:8F:96:9B:CB:52:14:E9:99:D5:86:2E:FA:03:70:04:9F:04:B2:63"]}}]
+          EOF
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
