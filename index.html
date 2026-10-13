@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudNest — Google Drive &amp; OneDrive in one place</title>
+    <meta name="theme-color" content="#1976D2">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+
+    <!-- Apply saved theme before first paint -->
+    <script>
+        try { if (localStorage.getItem('cloudnest.dark') === '1') document.documentElement.classList.add('dark'); } catch (e) {}
+    </script>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        cloudprimary: '#1976D2',
+                        cloudprimaryhover: '#1565C0',
+                        cloudsurface: { light: '#F8F9FA', dark: '#121212' },
+                        cloudcard: { light: '#FFFFFF', dark: '#1E1E1E' },
+                        cloudborder: { light: '#E0E0E0', dark: '#2C2C2C' }
+                    },
+                    fontFamily: { sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Sign-in libraries (Google Identity Services + Microsoft MSAL v2) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
+    <script>if (typeof msal === 'undefined') document.write(unescape("%3Cscript src='https://alcdn.msftauth.net/browser/2.35.0/js/msal-browser.min.js'%3E%3C/script%3E"));</script>
+
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        .cute-card { transition: all 0.25s ease; }
+        .cute-card:hover { transform: translateY(-3px); }
+        input, textarea, select { -webkit-user-select: text; user-select: text; }
+        .spin { animation: spin 0.9s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { .cute-card, .spin { transition: none; animation: none; } }
+        button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid #1976D2; outline-offset: 2px; }
+    </style>
+</head>
+<body class="h-full bg-cloudsurface-light dark:bg-cloudsurface-dark text-slate-800 dark:text-slate-100 font-sans antialiased overflow-hidden select-none">
+
+    <div id="app" class="flex flex-col h-full w-full relative">
+
+        <!-- Toasts -->
+        <div id="toast-container" class="fixed top-4 right-4 left-4 sm:left-auto z-[60] flex flex-col items-end space-y-2 pointer-events-none"></div>
+
+        <!-- Header -->
+        <header class="flex items-center justify-between px-4 sm:px-6 py-4 bg-cloudcard-light dark:bg-cloudcard-dark border-b border-cloudborder-light dark:border-cloudborder-dark z-10">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-cloudprimary flex items-center justify-center text-white shadow-md shadow-cloudprimary/30">
+                    <i class="fa-solid fa-cloud text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg tracking-tight text-slate-900 dark:text-white">CloudNest</h1>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Connected Accounts Manager</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2 sm:space-x-3">
+                <button data-act="connect-open" class="flex items-center space-x-2 px-3.5 py-2 bg-cloudprimary hover:bg-cloudprimaryhover text-white text-xs font-semibold rounded-xl shadow-md transition">
+                    <i class="fa-solid fa-plus-circle"></i>
+                    <span>Connect Account</span>
+                </button>
+                <button data-act="settings-open" title="Settings" aria-label="Settings" class="p-2 w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+                    <i class="fa-solid fa-gear"></i>
+                </button>
+                <button data-act="toggle-dark" title="Light / dark" aria-label="Toggle dark mode" class="p-2 w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+                    <i class="fa-solid fa-moon dark:hidden"></i>
+                    <i class="fa-solid fa-sun hidden dark:block"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Warning banner (e.g. opened as a local file) -->
+        <div id="banner" class="hidden px-4 sm:px-6 py-3 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-300"></div>
+
+        <main class="flex-1 flex flex-col h-full overflow-hidden">
+            <div id="content-scroll-area" class="flex-1 overflow-y-auto p-4 md:p-8">
+
+                <!-- ================= ACCOUNTS VIEW ================= -->
+                <div id="view-accounts" class="space-y-6 max-w-5xl mx-auto">
+                    <div class="flex items-end justify-between gap-4">
+                        <div>
+                            <h2 class="font-bold text-xl text-slate-900 dark:text-white">Your Cloud Accounts</h2>
+                            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Open an account to browse, upload, download, or organise its files</p>
+                        </div>
+                        <button id="refresh-quota-btn" data-act="refresh-quota" class="hidden shrink-0 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold rounded-xl transition">
+                            <i class="fa-solid fa-rotate mr-1"></i> Refresh storage
+                        </button>
+                    </div>
+
+                    <p id="storage-summary" class="hidden text-xs text-slate-500 dark:text-slate-400"></p>
+
+                    <div id="storage-cards-grid" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+
+                    <!-- Empty state -->
+                    <div id="accounts-empty" class="text-center py-14 px-6 bg-cloudcard-light dark:bg-cloudcard-dark rounded-3xl border border-cloudborder-light dark:border-cloudborder-dark">
+                        <div class="w-14 h-14 rounded-2xl bg-blue-100 dark:bg-blue-950/40 text-cloudprimary flex items-center justify-center mx-auto mb-4">
+                            <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
+                        </div>
+                        <h3 class="font-bold text-base text-slate-900 dark:text-white">Connect your first account</h3>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">Sign in with Google or Microsoft. Your files stay in your own accounts, and nothing is stored on any CloudNest server.</p>
+                        <div class="flex flex-col sm:flex-row items-center justify-center gap-3 mt-6">
+                            <button data-act="connect-google" class="w-full sm:w-auto flex items-center justify-center space-x-2 px-4 py-2.5 bg-cloudprimary hover:bg-cloudprimaryhover text-white text-xs font-semibold rounded-xl shadow-md transition">
+                                <i class="fa-brands fa-google-drive"></i><span>Connect Google Drive</span>
+                            </button>
+                            <button data-act="connect-ms" class="w-full sm:w-auto flex items-center justify-center space-x-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold rounded-xl transition">
+                                <i class="fa-brands fa-microsoft"></i><span>Connect OneDrive</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= FILE EXPLORER VIEW ================= -->
+                <div id="view-files" class="hidden space-y-6 max-w-6xl mx-auto">
+                    <div class="flex items-center justify-between gap-4 bg-cloudcard-light dark:bg-cloudcard-dark p-4 rounded-3xl border border-cloudborder-light dark:border-cloudborder-dark shadow-sm">
+                        <div class="flex items-center space-x-3 overflow-hidden">
+                            <button data-act="back" class="p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-slate-600 dark:text-slate-300 transition flex items-center space-x-1.5 text-xs font-semibold shrink-0">
+                                <i class="fa-solid fa-arrow-left"></i>
+                                <span class="hidden sm:inline">Accounts</span>
+                            </button>
+                            <div id="active-account-badge" class="flex items-center space-x-2 pl-2 border-l border-slate-200 dark:border-slate-700 overflow-hidden"></div>
+                        </div>
+                        <div class="flex items-center space-x-2 shrink-0">
+                            <button data-act="upload-open" class="flex items-center space-x-2 px-3.5 py-2 bg-cloudprimary hover:bg-cloudprimaryhover text-white text-xs font-semibold rounded-xl shadow-md transition">
+                                <i class="fa-solid fa-cloud-arrow-up"></i>
+                                <span>Upload</span>
+                            </button>
+                            <button data-act="folder-open" class="flex items-center space-x-2 px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold rounded-xl transition">
+                                <i class="fa-solid fa-folder-plus"></i>
+                                <span class="hidden sm:inline">New Folder</span>
+                            </button>
+                            <button data-act="refresh" title="Refresh" aria-label="Refresh" class="w-9 h-9 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs rounded-xl transition">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-cloudcard-light dark:bg-cloudcard-dark p-4 rounded-3xl border border-cloudborder-light dark:border-cloudborder-dark shadow-sm">
+                        <div id="breadcrumb-container" class="flex items-center space-x-2 text-sm overflow-x-auto whitespace-nowrap pb-1 sm:pb-0"></div>
+                        <div class="flex items-center space-x-2">
+                            <div class="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl">
+                                <button data-act="view-grid" id="view-mode-grid" class="px-3 py-1.5 rounded-xl text-xs font-semibold transition"><i class="fa-solid fa-border-all mr-1"></i> Grid</button>
+                                <button data-act="view-list" id="view-mode-list" class="px-3 py-1.5 rounded-xl text-xs font-semibold transition"><i class="fa-solid fa-list mr-1"></i> List</button>
+                            </div>
+                            <select id="sort-by" class="bg-slate-100 dark:bg-slate-800 border-none text-xs rounded-2xl px-3 py-2 font-medium focus:ring-2 focus:ring-cloudprimary">
+                                <option value="name">Sort by Name</option>
+                                <option value="date">Sort by Date</option>
+                                <option value="size">Sort by Size</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Sign-in / error notice -->
+                    <div id="files-notice" class="hidden"></div>
+
+                    <div id="files-container"></div>
+                    <div id="load-more-wrap" class="hidden text-center pb-6">
+                        <button data-act="load-more" class="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold rounded-xl transition">Load more</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Drag-and-drop overlay -->
+        <div id="drop-overlay" class="hidden absolute inset-0 z-40 bg-cloudprimary/10 backdrop-blur-[2px] border-4 border-dashed border-cloudprimary m-3 rounded-3xl pointer-events-none items-center justify-center">
+            <div class="bg-cloudcard-light dark:bg-cloudcard-dark px-6 py-4 rounded-2xl shadow-xl text-sm font-bold text-cloudprimary"><i class="fa-solid fa-cloud-arrow-up mr-2"></i>Drop files to upload here</div>
+        </div>
+    </div>
+
+    <!-- Upload progress tray -->
+    <div id="upload-tray" class="hidden fixed bottom-4 left-4 right-4 sm:right-auto sm:w-96 z-40 bg-cloudcard-light dark:bg-cloudcard-dark border border-cloudborder-light dark:border-cloudborder-dark rounded-2xl shadow-2xl overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-cloudborder-light dark:border-cloudborder-dark">
+            <span id="tray-title" class="text-xs font-bold text-slate-900 dark:text-white">Uploads</span>
+            <div class="flex items-center space-x-1">
+                <button data-act="tray-toggle" aria-label="Collapse" class="w-7 h-7 text-slate-400 hover:text-slate-600 rounded-lg"><i id="tray-toggle-icon" class="fa-solid fa-chevron-down text-xs"></i></button>
+                <button data-act="tray-close" aria-label="Close" class="w-7 h-7 text-slate-400 hover:text-slate-600 rounded-lg"><i class="fa-solid fa-xmark text-xs"></i></button>
+            </div>
+        </div>
+        <div id="tray-list" class="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800"></div>
+    </div>
+
+    <!-- ================= MODALS ================= -->
+
+    <!-- Preview -->
+    <div id="preview-modal" data-modal class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="bg-cloudcard-light dark:bg-cloudcard-dark border border-cloudborder-light dark:border-cloudborder-dark rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] h-[82vh]">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-cloudborder-light dark:border-cloudborder-dark">
+                <div class="flex items-center space-x-3 overflow-hidden">
+                    <div id="preview-icon-container" class="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center"></div>
+                    <div class="overflow-hidden">
+                        <h3 id="preview-title" class="font-bold text-sm text-slate-900 dark:text-white truncate"></h3>
+                        <p id="preview-subtitle" class="text-xs text-slate-500 dark:text-slate-400 truncate"></p>
+                    </div>
+                </div>
+                <button data-act="close-preview" aria-label="Close" class="w-8 h-8 shrink-0 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center text-slate-500 transition">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div id="preview-body" class="p-4 flex-1 overflow-y-auto flex flex-col items-center justify-start bg-slate-100 dark:bg-slate-900/80"></div>
+            <div class="px-5 py-4 border-t border-cloudborder-light dark:border-cloudborder-dark flex flex-wrap items-center justify-between gap-3 bg-cloudcard-light dark:bg-cloudcard-dark">
+                <span id="preview-meta" class="text-xs text-slate-400"></span>
+                <div class="flex space-x-2">
+                    <a id="preview-open" target="_blank" rel="noopener" class="hidden px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold rounded-xl transition items-center space-x-2">
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i><span id="preview-open-label">Open</span>
+                    </a>
+                    <button data-act="download" class="px-4 py-2 bg-cloudprimary hover:bg-cloudprimaryhover text-white text-xs font-semibold rounded-xl shadow transition flex items-center space-x-2">
+                        <i class="fa-solid fa-download"></i><span>Download</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload -->
+    <div id="upload-modal" data-modal class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="bg-cloudcard-light dark:bg-cloudcard-dark border border-cloudborder-light dark:border-cloudborder-dark rounded-3xl w-full max-w-md p-6 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="font-bold text-base text-slate-900 dark:text-white">Upload files</h3>
+                <button data-act="close-modal" data-target="upload-modal" aria-label="Close" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="space-y-3">
+                <div>
+                    <label for="upload-account-select" class="block text-xs font-medium text-slate-500 mb-1">Upload to account</label>
+                    <select id="upload-account-select" class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-xs p-3 font-medium focus:ring-2 focus:ring-cloudprimary"></select>
+                    <p id="upload-dest" class="text-[11px] text-slate-400 mt-1.5"></p>
+                </div>
+                <div>
+                    <label id="upload-drop" for="upload-file-input" class="block cursor-pointer border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-cloudprimary rounded-2xl p-6 text-center transition">
+                        <i class="fa-solid fa-cloud-arrow-up text-2xl text-cloudprimary mb-2"></i>
+                        <p class="text-xs font-semibold text-slate-700 dark:text-slate-200">Tap to choose files, or drop them here</p>
+                        <p id="upload-summary" class="text-[11px] text-slate-400 mt-1">Any file type, any size your account allows</p>
+                    </label>
+                    <input type="file" id="upload-file-input" multiple class="hidden">
+                </div>
+            </div>
+            <div class="flex justify-end space-x-3 pt-1">
+                <button data-act="close-modal" data-target="upload-modal" class="px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">Cancel</button>
+                <button data-act="upload-start" class="px-4 py-2 bg-cloudprimary hover:bg-cloudprimaryhover text-white text-xs font-semibold rounded-xl shadow">Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New folder -->
+    <div id="folder-modal" data-modal class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="bg-cloudcard-light dark:bg-cloudcard-dark border border-cloudborder-light dark:border-cloudborder-dark rounded-3xl w-full max-w-sm p-6 shadow-2xl space-y-4">
+            <h3 class="font-bold text-base text-slate-900 dark:text-white">Create new folder</h3>
+            <div>
+                <label for="new-folder-name" class="block text-xs font-medium text-slate-500 mb-1">Folder name</label>
+                <input type="text" id="new-folder-name" placeholder="e.g. Project Assets" maxlength="200" class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-xs p-3 focus:ring-2 focus:ring-cloudprimary">
+            </div>
+            <div class="flex justify-end space-x-3 pt-2">
+                <button data-act="close-modal" data-target="folder-modal" class="px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">Cancel</button>
+                <button data-act="folder-create" class="px-4 py-2 bg-cloudprimary hover:bg-cloudprimaryhover text-white text-xs font-semibold rounded-xl shadow">Create folder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connect -->
+    <div id="connect-modal" data-modal class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="bg-cloudcard-light dark:bg-cloudcard-dark border border-cloudborder-light dark:border-cloudborder-dark rounded-3xl w-full max-w-md p-6 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="font-bold text-base text-slate-900 dark:text-white">Connect an account</h3>
+                    <p class="text-xs text-slate-500">Official OAuth 2.0 sign-in. You can add as many as you like.</p>
+                </div>
+                <button data-act="close-modal" data-target="connect-modal" aria-label="Close" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <button data-act="connect-google" class="w-full flex items-center space-x-3 p-4 rounded-2xl border border-cloudborder-light dark:border-cloudborder-dark hover:border-cloudprimary hover:bg-blue-50/50 dark:hover:bg-blue-950/20 text-left transition">
+                <div class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-950/40 text-cloudprimary flex items-center justify-center"><i class="fa-brands fa-google-drive text-lg"></i></div>
+                <div><div class="text-sm font-bold text-slate-900 dark:text-white">Google Drive</div><div class="text-xs text-slate-500">Gmail or Google Workspace account</div></div>
+            </button>
+            <button data-act="connect-ms" class="w-full flex items-center space-x-3 p-4 rounded-2xl border border-cloudborder-light dark:border-cloudborder-dark hover:border-cloudprimary hover:bg-blue-50/50 dark:hover:bg-blue-950/20 text-left transition">
+                <div class="w-10 h-10 rounded-xl bg-sky-100 dark:bg-sky-950/40 text-sky-700 flex items-center justify-center"><i class="fa-brands fa-microsoft text-lg"></i></div>
+                <div><div class="text-sm font-bold text-slate-900 dark:text-white">OneDrive</div><div class="text-xs text-slate-500">Personal, work, or school Microsoft account</div></div>
+            </button>
+        </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="settings-modal" data-modal class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="bg-cloudcard-light dark:bg-cloudcard-dark border border-cloudborder-light dark:border-cloudborder-dark rounded-3xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="font-bold text-base text-slate-900 dark:text-white">Settings</h3>
+                <button data-act="close-modal" data-target="settings-modal" aria-label="Close" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="text-xs text-slate-500 leading-relaxed">To sign in with real accounts, CloudNest needs your own free app IDs from Google and Microsoft (steps are in README.md). They are public IDs, not passwords. Saved in this browser only.</p>
+            <div>
+                <label for="set-google" class="block text-xs font-medium text-slate-500 mb-1">Google OAuth Client ID</label>
+                <input type="text" id="set-google" placeholder="123456789-abc...apps.googleusercontent.com" autocomplete="off" spellcheck="false" class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-xs p-3 focus:ring-2 focus:ring-cloudprimary">
+            </div>
+            <div>
+                <label for="set-ms" class="block text-xs font-medium text-slate-500 mb-1">Microsoft Application (client) ID</label>
+                <input type="text" id="set-ms" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off" spellcheck="false" class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-xs p-3 focus:ring-2 focus:ring-cloudprimary">
+            </div>
+            <div class="rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-cloudborder-light dark:border-cloudborder-dark p-4 space-y-3">
+                <p class="text-xs font-semibold text-slate-700 dark:text-slate-200">Register these exact addresses</p>
+                <div>
+                    <p class="text-[11px] text-slate-500 mb-1">Google &rarr; Authorized JavaScript origins</p>
+                    <div class="flex items-center gap-2"><code id="reg-origin" class="flex-1 text-[11px] break-all bg-white dark:bg-slate-800 rounded-lg px-2 py-1.5"></code><button data-act="copy" data-src="reg-origin" class="px-2.5 py-1.5 text-[11px] font-semibold bg-slate-200 dark:bg-slate-700 rounded-lg">Copy</button></div>
+                </div>
+                <div>
+                    <p class="text-[11px] text-slate-500 mb-1">Microsoft &rarr; Redirect URI (platform: Single-page application)</p>
+                    <div class="flex items-center gap-2"><code id="reg-redirect" class="flex-1 text-[11px] break-all bg-white dark:bg-slate-800 rounded-lg px-2 py-1.5"></code><button data-act="copy" data-src="reg-redirect" class="px-2.5 py-1.5 text-[11px] font-semibold bg-slate-200 dark:bg-slate-700 rounded-lg">Copy</button></div>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-3 pt-1">
+                <button data-act="close-modal" data-target="settings-modal" class="px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">Cancel</button>
+                <button data-act="settings-save" class="px-4 py-2 bg-cloudprimary hover:bg-cloudprimaryhover text-white text-xs font-semibold rounded-xl shadow">Save &amp; reload</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm -->
+    <div id="confirm-modal" data-modal class="hidden fixed inset-0 z-[55] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="bg-cloudcard-light dark:bg-cloudcard-dark border border-cloudborder-light dark:border-cloudborder-dark rounded-3xl w-full max-w-sm p-6 shadow-2xl space-y-4">
+            <div class="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+                <i class="fa-solid fa-triangle-exclamation text-xl"></i>
+            </div>
+            <div class="text-center">
+                <h3 id="confirm-title" class="font-bold text-base text-slate-900 dark:text-white"></h3>
+                <p id="confirm-text" class="text-xs text-slate-500 mt-1 break-words"></p>
+            </div>
+            <div class="flex space-x-3 pt-2">
+                <button data-act="confirm-no" class="flex-1 py-2.5 text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl">Cancel</button>
+                <button data-act="confirm-yes" id="confirm-yes" class="flex-1 py-2.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
